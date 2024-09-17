@@ -14,9 +14,31 @@ I'm working with the [official html spec](https://html.spec.whatwg.org/) as my g
 
 ## Progress
 As of last commit, I have a html tokenizer that can tokenize
+- doctype
+- start and end tags
+- characters
+- and comments!
+
 ```html
+<!-- this is comment -->
 <!DOCTYPE html>
+<!--tiny comment-->
 <html>
+
+<!--yet another-->
+
+<body>
+    <p>hello</p>
+    <div>
+        <p>Hello there</p>
+    </div>
+</body>
 
 </html>
 ```
+
+## How to run the project
+- clone the project
+- `cd` into `wonder-land`
+- `cargo build`
+- `cargo run`

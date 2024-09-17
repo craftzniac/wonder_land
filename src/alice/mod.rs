@@ -33,6 +33,7 @@ pub struct HTMLTokenizer {
     tokens: Vec<HTMLToken>,
     current_doctype_token: Option<DOCTYPE>,
     current_tag_token: Option<Tag>,
+    current_comment_token: Option<Comment>,
 }
 
 #[derive(Debug)]
@@ -66,7 +67,7 @@ pub enum Tag {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Comment {
     data: String,
 }
@@ -89,6 +90,7 @@ impl HTMLTokenizer {
             next_input_character: input_stream.clone().get(0).copied(), // char at index 0;
             current_doctype_token: None,
             current_tag_token: None,
+            current_comment_token: None,
         }
     }
 
@@ -127,7 +129,7 @@ impl HTMLTokenizer {
             // print the tokens
             // println!("tokens: {:?}", self.tokens);
 
-            //  ... iterating html string
+            // ... iterating html string
             // checking for eof
             // println!("char:{:?}", self.current_input_character);
             // if self.current_input_character == None && self.next_input_character == None {
@@ -135,7 +137,7 @@ impl HTMLTokenizer {
             // }
             // self.consume_next_input_character();
             // continue;
-            //  ...
+            // ...
 
             match self.state {
                 // Data state
@@ -270,8 +272,91 @@ impl HTMLTokenizer {
                         // consume/move cursor over "DOCTYPE"
                         self.consume_substring("DOCTYPE".to_string());
                         self.switch_state(HTMLTokenizerState::DOCTYPE);
+                    } else if self.next_few_characters_are("--".to_string()) {
+                        // consume "--"
+                        self.consume_substring("--".to_string());
+                        self.current_comment_token = Some(Comment {
+                            data: "".to_string(),
+                        });
+                        self.switch_state(HTMLTokenizerState::CommentStart);
                     } else {
                         // ignore it
+                    }
+                }
+
+                // Comment Start state
+                HTMLTokenizerState::CommentStart => {
+                    if let Some(current_input_character) =
+                        self.consume_next_input_character().clone()
+                    {
+                        match current_input_character {
+                            '-' => {}
+                            '>' => {}
+                            _ => {
+                                // reconsume in the comment state
+                                self.switch_state(HTMLTokenizerState::Comment);
+                                self.reconsume = true;
+                            }
+                        }
+                    } else {
+                        eof_reached!("end of file reached");
+                    }
+                }
+
+                // Comment state
+                HTMLTokenizerState::Comment => {
+                    if let Some(current_input_character) =
+                        self.consume_next_input_character().clone()
+                    {
+                        match current_input_character {
+                            '<' => {}
+                            '-' => self.switch_state(HTMLTokenizerState::CommentEndDash),
+                            '\0' => {}
+                            _ => {
+                                // append the current_input_character to the existing comment
+                                // token's data
+                                if let Some(comment_token) = &mut self.current_comment_token {
+                                    comment_token.data.push(current_input_character);
+                                }
+                            }
+                        }
+                    } else {
+                        eof_reached!("end of file reached");
+                    }
+                }
+
+                // Comment End Dash state
+                HTMLTokenizerState::CommentEndDash => {
+                    if let Some(current_input_character) =
+                        self.consume_next_input_character().clone()
+                    {
+                        match current_input_character {
+                            '-' => self.switch_state(HTMLTokenizerState::CommentEnd),
+                            _ => {}
+                        }
+                    } else {
+                        eof_reached!("end of file reached");
+                    }
+                }
+
+                // Comment End state
+                HTMLTokenizerState::CommentEnd => {
+                    if let Some(current_input_character) =
+                        self.consume_next_input_character().clone()
+                    {
+                        match current_input_character {
+                            '>' => {
+                                //
+                                self.switch_state(HTMLTokenizerState::Data);
+                                // emit the current comment token.
+                                self.emit_current_comment_token();
+                            }
+                            '!' => {}
+                            '-' => {}
+                            _ => {}
+                        }
+                    } else {
+                        eof_reached!("end of file reached");
                     }
                 }
 
@@ -398,6 +483,14 @@ impl HTMLTokenizer {
         }
         // clear the current start tag token
         self.current_tag_token = None;
+    }
+
+    fn emit_current_comment_token(&mut self) {
+        if let Some(comment_token) = self.current_comment_token.clone() {
+            self.emit_token(HTMLToken::Comment(comment_token));
+        }
+        // clear the current comment token
+        self.current_comment_token = None;
     }
 
     fn emit_current_doctype_token(&mut self) {
