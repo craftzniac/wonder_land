@@ -1,6 +1,13 @@
 use std::collections::HashMap;
 
-type Attributes = HashMap<String, String>;
+// type Attributes = HashMap<String, String>;
+#[derive(Debug, Clone)]
+struct Attribute {
+    key: String,
+    value: String
+}
+
+type Attributes = Vec<Attribute>;
 
 macro_rules! eof_reached {
     ($msg:expr) => {
@@ -154,11 +161,6 @@ impl HTMLTokenizer {
                                 let character_token = Character {
                                     data: current_input_character.clone().to_string(),
                                 };
-                                // TODO: i might have to have a current_character_token value on
-                                // the tokenizer struct like I have with the current_doctype_token
-                                // , who knows... But if that happens, then I'll have to have a
-                                // self.emit_current_character_token() which will use the
-                                // self.emit_token() internally
                                 self.emit_token(HTMLToken::Character(character_token));
                             }
                         }
@@ -178,7 +180,7 @@ impl HTMLTokenizer {
                                 self.current_tag_token = Some(Tag::StartTag {
                                     tag_name: "".to_string(),
                                     self_closing: false,
-                                    attributes: HashMap::new(),
+                                    attributes: Vec::new()
                                 });
                                 // reconsume the current_input_character in the Tag Name state
                                 self.switch_state(HTMLTokenizerState::TagName);
@@ -202,7 +204,7 @@ impl HTMLTokenizer {
                                 self.current_tag_token = Some(Tag::EndTag {
                                     tag_name: "".to_string(),
                                     self_closing: false,
-                                    attributes: HashMap::new(),
+                                    attributes: Vec::new()
                                 });
 
                                 // reconsume current_input_character in the tag name state
@@ -223,7 +225,7 @@ impl HTMLTokenizer {
                     {
                         match current_input_character {
                             '\t' | '\n' | '\x0C' | ' ' => {
-                                // ignore for now
+                                self.switch_state(HTMLTokenizerState::BeforeAttributeName);
                             }
                             '/' => {
                                 // ignore for now
@@ -263,6 +265,164 @@ impl HTMLTokenizer {
                         }
                     } else {
                         eof_reached!("end of file reached");
+                    }
+                }
+
+                // Before Attribute Name state
+                HTMLTokenizerState::BeforeAttributeName => {
+                    if let Some(current_input_character) =
+                        self.consume_next_input_character().clone()
+                    {
+                        match current_input_character {
+                            '\t' | '\n' | '\x0C' | ' ' => {
+                                // ignore the character
+                                continue;
+                            }
+                            '/' | '>'   // also matches for eof
+                            => {
+                                // ignore for now
+                            }
+                            '=' => {}
+                            _ => {
+                                // start a new attribute in the current tag token. Set that
+                                // attribute name and value to empty string.
+                                if let Some(tag_token) = &mut self.current_tag_token {
+                                    match tag_token {
+                                        Tag::StartTag {
+                                            tag_name: _,
+                                            self_closing: _,
+                                            attributes,
+                                        }
+                                        | Tag::EndTag {
+                                            tag_name: _,
+                                            self_closing: _,
+                                            attributes,
+                                        } => {
+                                            // push a new attribute to the attributes vector
+                                            let new_attribute = Attribute{key: "".to_string(), value: "".to_string()};
+                                            attributes.push(new_attribute);
+                                            // switch to Attribute name state and reconsume the
+                                            // current_input_character
+                                            self.switch_state(HTMLTokenizerState::AttributeName);
+                                            self.reconsume = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        eof_reached!("end of file reached");
+                    }
+                }
+
+                // Attribute Name state
+                HTMLTokenizerState::AttributeName => {
+                    if let Some(current_input_character) = self.consume_next_input_character().clone() {
+                        match current_input_character {
+                            '\t' | '\n' | '\x0C' | ' ' | '/' | '>'   // also includes an eof
+                            => {
+                                // ignore for now
+                            }
+                            '=' => {
+                                self.switch_state(HTMLTokenizerState::BeforeAttributeValue);
+                            }
+                            'A'..='Z' => {}
+                            '\0' => {}
+                            '"' | '\'' | '<' => {}
+                            _ => {
+                                // append current_input_character to current attribute's name
+                                if let Some(tag_token) = &mut self.current_tag_token {
+                                    match tag_token{
+                                        Tag::StartTag { tag_name: _, self_closing: _, attributes } 
+                                        | 
+                                        Tag::EndTag { tag_name: _, self_closing: _, attributes } => {
+                                            // the `current attribute` is the last attribute in the
+                                            // attributes vector
+                                            if let Some(current_attribute) = attributes.last_mut(){
+                                                current_attribute.key.push(current_input_character);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+
+                // Before Attribute Value state
+                HTMLTokenizerState::BeforeAttributeValue => {
+                    if let Some(current_input_character) = self.consume_next_input_character() {
+                        match current_input_character {
+                            '\t' | '\n' | '\x0C' | ' ' => {
+                                // ignore the character
+                                continue;
+                            }
+                            '"' => {
+                                self.switch_state(HTMLTokenizerState::AttributeValueDoubleQuoted);
+                            }
+                            '\'' => {
+                                self.switch_state(HTMLTokenizerState::AttributeValueSingleQuoted);
+                            }
+                            '>' => {}
+                            _ => {
+                                // ignore for now
+                            }
+                        }
+                    }
+                }
+
+                // Attribute Value Single Quoted state
+                HTMLTokenizerState::AttributeValueSingleQuoted => {
+                    if let Some(current_input_character) = self.consume_next_input_character() {
+                        match current_input_character {
+                            '\'' => self.switch_state(HTMLTokenizerState::AfterAttributeValueQuoted),
+                            '&' => {}
+                            '\0' => {}
+                            _=> {
+                                self.append_current_input_character_to_current_attribute_value();
+                            }
+                        }
+                    }
+                }
+
+
+                // Attribute Value Double Quoted state
+                HTMLTokenizerState::AttributeValueDoubleQuoted => {
+                    if let Some(current_input_character) = self.consume_next_input_character().clone() {
+                        match current_input_character {
+                            '"' => {
+                                self.switch_state(HTMLTokenizerState::AfterAttributeValueQuoted);
+                            }
+                            '&' => {}
+                            '\0' => {}
+                            _=> {
+                                self.append_current_input_character_to_current_attribute_value();
+                            }
+                        }
+                    }
+                }
+
+                // After Attribute Value Quoted state
+                HTMLTokenizerState::AfterAttributeValueQuoted => {
+                    if let Some(current_input_character) = self.consume_next_input_character(){
+                        match current_input_character{
+                            '\t' | '\n' | '\x0C' | ' ' => {
+                                self.switch_state(HTMLTokenizerState::BeforeAttributeName);
+                            }
+                            '/' => {
+                                // ignore for now
+                            }
+                            '>' => {
+                                // emit current_tag_token
+                                self.emit_current_tag_token();
+                                // switch to data state
+                                self.switch_state(HTMLTokenizerState::Data);
+                            }
+                            _=> {
+                                // ignore for now
+                            }
+                        }
                     }
                 }
 
@@ -471,6 +631,20 @@ impl HTMLTokenizer {
 
         // print the tokens
         println!("tokens: {:#?}", self.tokens);
+    }
+
+    fn append_current_input_character_to_current_attribute_value(&mut self){
+        if let Some(tag_token) = &mut self.current_tag_token{
+            match tag_token{
+                Tag::StartTag { tag_name: _, self_closing: _, attributes }
+                |
+                Tag::EndTag { tag_name: _, self_closing: _, attributes } =>  {
+                    if let Some(current_attribute) = attributes.last_mut(){
+                        current_attribute.value.push(self.current_input_character.clone().unwrap());
+                    }
+                }
+            }
+        }
     }
 
     fn emit_token(&mut self, token: HTMLToken) {
