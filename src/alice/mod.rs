@@ -243,7 +243,7 @@ impl HTMLTokenizer {
                                 // ignore for now
                             }
                             _ => {
-                                // append current_input_character to current tag token's tag name
+                                // append current_input_character to current tag token's name
                                 if let Some(tag_token) = &mut self.current_tag_token {
                                     // append current_input_character to start tag's name
                                     match tag_token {
@@ -280,7 +280,8 @@ impl HTMLTokenizer {
                             }
                             '/' | '>'   // also matches for eof
                             => {
-                                // ignore for now
+                                self.reconsume = true;
+                                self.switch_state(HTMLTokenizerState::AfterAttributeName);
                             }
                             '=' => {}
                             _ => {
@@ -312,6 +313,47 @@ impl HTMLTokenizer {
                         }
                     } else {
                         eof_reached!("end of file reached");
+                    }
+                }
+
+                // After Attribute Name state
+                HTMLTokenizerState::AfterAttributeName => {
+                    if let Some(current_input_character) = self.consume_next_input_character(){
+                        match current_input_character{
+                            '\t' | '\n' | '\x0C' | ' ' => {
+                                continue;
+                            }
+                            '/' => {
+                                self.switch_state(HTMLTokenizerState::SelfClosingStartTag);
+                            }
+                            '=' => {}
+                            '>' => {}
+                            _ => {}
+                        }
+                    }
+                }
+
+
+                // Self-Closing Start Tag state
+                HTMLTokenizerState::SelfClosingStartTag => {
+                    if let Some(current_input_character) = self.consume_next_input_character() {
+                        match current_input_character{
+                            '>' => {
+                                // set the self-closing tag of the current tag token
+                                if let Some(tag_token) = &mut self.current_tag_token{
+                                    match tag_token{
+                                        Tag::StartTag { tag_name: _, self_closing, attributes: _ } 
+                                        | 
+                                        Tag::EndTag { tag_name: _, self_closing, attributes: _ } => {
+                                            *self_closing = true;
+                                            self.switch_state(HTMLTokenizerState::Data);
+                                            self.emit_current_tag_token();
+                                        }
+                                    }
+                                }
+                            }
+                            _ => { }
+                        }
                     }
                 }
 
@@ -632,6 +674,8 @@ impl HTMLTokenizer {
         // print the tokens
         println!("tokens: {:#?}", self.tokens);
     }
+
+
 
     fn append_current_input_character_to_current_attribute_value(&mut self){
         if let Some(tag_token) = &mut self.current_tag_token{
